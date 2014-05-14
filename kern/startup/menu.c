@@ -45,7 +45,6 @@
 #include "opt-synchprobs.h"
 #include "opt-sfs.h"
 #include "opt-net.h"
-
 /*
  * In-kernel menu and command dispatcher.
  */
@@ -396,6 +395,22 @@ cmd_kheapstats(int nargs, char **args)
 	return 0;
 }
 
+/*
+ * Command to turn debug statements for threads.
+ *
+ */
+static
+int
+cmd_dth(int nargs, char **args)
+{
+        (void)nargs;
+        (void)args;
+
+	dbflags = DB_THREADS;
+
+        return 0;
+}
+
 ////////////////////////////////////////
 //
 // Menus.
@@ -437,6 +452,7 @@ static const char *opsmenu[] = {
 	"[sync]    Sync filesystems          ",
 	"[panic]   Intentional panic         ",
 	"[q]       Quit and shut down        ",
+	"[dth]	  Enables debug statements for threads",
 	NULL
 };
 
@@ -548,6 +564,7 @@ static struct {
 	{ "q",		cmd_quit },
 	{ "exit",	cmd_quit },
 	{ "halt",	cmd_quit },
+	{ "dth",	cmd_dth },
 
 #if OPT_SYNCHPROBS
 	/* in-kernel synchronization problem(s) */
