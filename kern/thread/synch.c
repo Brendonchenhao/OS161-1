@@ -263,7 +263,7 @@ lock_do_i_hold(struct lock *lock)
 
         //(void)lock;  // suppress warning until code gets written
 
-        return curthread == lock->lk_thread; // dummy until code gets written
+        return curthread == lock->lk_thread;
 }
 
 ////////////////////////////////////////////////////////////
