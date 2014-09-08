@@ -38,6 +38,9 @@
 #include <addrspace.h>
 #include <vm.h>
 
+#include <syscall.h>
+#include "opt-A3.h"
+
 /*
  * Dumb MIPS-only "VM system" that is intended to only be just barely
  * enough to struggle off the ground. You should replace all of this
@@ -109,6 +112,16 @@ vm_tlbshootdown(const struct tlbshootdown *ts)
 int
 vm_fault(int faulttype, vaddr_t faultaddress)
 {
+
+	#if OPT_A3
+
+		bool textSegment = false; 
+		bool tlbMiss = false;
+
+	#endif
+
+
+
 	vaddr_t vbase1, vtop1, vbase2, vtop2, stackbase, stacktop;
 	paddr_t paddr;
 	int i;
@@ -123,7 +136,8 @@ vm_fault(int faulttype, vaddr_t faultaddress)
 	switch (faulttype) {
 	    case VM_FAULT_READONLY:
 		/* We always create pages read-write, so we can't get this */
-		panic("dumbvm: got VM_FAULT_READONLY\n");
+		//panic("dumbvm: got VM_FAULT_READONLY\n");
+		sys__exit(1);
 	    case VM_FAULT_READ:
 	    case VM_FAULT_WRITE:
 		break;
@@ -172,6 +186,13 @@ vm_fault(int faulttype, vaddr_t faultaddress)
 
 	if (faultaddress >= vbase1 && faultaddress < vtop1) {
 		paddr = (faultaddress - vbase1) + as->as_pbase1;
+
+		#if OPT_A3
+
+			textSegment =  true;
+
+		#endif
+
 	}
 	else if (faultaddress >= vbase2 && faultaddress < vtop2) {
 		paddr = (faultaddress - vbase2) + as->as_pbase2;
@@ -189,18 +210,66 @@ vm_fault(int faulttype, vaddr_t faultaddress)
 	/* Disable interrupts on this CPU while frobbing the TLB. */
 	spl = splhigh();
 
+	tlbMiss = true;
+
 	for (i=0; i<NUM_TLB; i++) {
 		tlb_read(&ehi, &elo, i);
 		if (elo & TLBLO_VALID) {
 			continue;
 		}
 		ehi = faultaddress;
-		elo = paddr | TLBLO_DIRTY | TLBLO_VALID;
+
+		#if OPT_A3
+
+			if(textSegment && as->finished){
+
+				elo = paddr | TLBLO_VALID;
+
+			}
+			else {
+
+				elo = paddr | TLBLO_DIRTY | TLBLO_VALID;
+
+			}
+
+		#endif
+
+			//elo = paddr | TLBLO_DIRTY | TLBLO_VALID;
+		
 		DEBUG(DB_VM, "dumbvm: 0x%x -> 0x%x\n", faultaddress, paddr);
 		tlb_write(ehi, elo, i);
+
+		#if OPT_A3
+
+			tlbMiss = false;
+
+		#endif
+
 		splx(spl);
 		return 0;
 	}
+
+	#if OPT_A3
+
+		if(tlbMiss){
+
+			ehi = faultaddress;
+
+			if(textSegment && as->finished){
+				elo = paddr | TLBLO_VALID;
+			}
+			else {
+				elo = paddr | TLBLO_DIRTY | TLBLO_VALID;
+			}
+
+			tlb_random(ehi, elo);
+
+			splx(spl);
+			return 0;
+		}
+		
+
+	#endif
 
 	kprintf("dumbvm: Ran out of TLB entries - cannot handle page fault\n");
 	splx(spl);
@@ -340,7 +409,16 @@ as_prepare_load(struct addrspace *as)
 int
 as_complete_load(struct addrspace *as)
 {
-	(void)as;
+	#if OPT_A3
+
+		as->finished = true;
+
+	#else
+
+		(void)as;
+
+	#endif
+
 	return 0;
 }
 
