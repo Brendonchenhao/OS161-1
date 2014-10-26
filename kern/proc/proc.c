@@ -50,6 +50,10 @@
 #include <vfs.h>
 #include <synch.h>
 #include <kern/fcntl.h>  
+#include "opt-A2.h"
+#include <limits.h>
+#include <kern/errno.h>
+
 
 /*
  * The process for the kernel; this holds all the kernel-only threads.
@@ -67,6 +71,16 @@ static unsigned int proc_count;
 static struct semaphore *proc_count_mutex;
 /* used to signal the kernel menu thread when there are no processes */
 struct semaphore *no_proc_sem;   
+
+#if OPT_A2
+
+//Table to keep track of process Pids
+Pid *process_Pids;
+
+struct lock *process_Pids_lock;
+
+#endif /* OPT_A2 */
+
 #endif  // UW
 
 
@@ -79,6 +93,16 @@ struct proc *
 proc_create(const char *name)
 {
 	struct proc *proc;
+
+	#if OPT_A2
+
+		proc->p_pid = pid_create();
+		if(proc->p_pid < PID_MIN) {
+			kfree(proc);
+			return NULL;
+		}
+
+	#endif
 
 	proc = kmalloc(sizeof(*proc));
 	if (proc == NULL) {
@@ -163,6 +187,12 @@ proc_destroy(struct proc *proc)
 	}
 #endif // UW
 
+	#if OPT_A2
+
+		pid_destroy(proc->p_pid);
+
+	#endif
+
 	threadarray_cleanup(&proc->p_threads);
 	spinlock_cleanup(&proc->p_lock);
 
@@ -190,6 +220,10 @@ proc_destroy(struct proc *proc)
 /*
  * Create the process structure for the kernel.
  */
+
+
+/** TODO: Create a process table that will keep a reference to all user processes created **/
+
 void
 proc_bootstrap(void)
 {
@@ -200,6 +234,27 @@ proc_bootstrap(void)
 #ifdef UW
   proc_count = 0;
   proc_count_mutex = sem_create("proc_count_mutex",1);
+  
+
+  //Don't need to free memory allocation within this function because it's used
+  //throughout the program
+  #if OPT_A2
+
+  process_Pids = kmalloc(sizeof(Pid *)*(PID_MAX));
+
+  if (process_Pids == NULL) {
+    panic("could not create process_Pids table\n");
+  }
+
+  process_Pids_lock = lock_create("process_Pids_lock");
+
+  if (process_Pids_lock == NULL) {
+	kfree(process_Pids);
+	panic("could not create process_Pids_lock\n");
+  }
+
+  #endif
+
   if (proc_count_mutex == NULL) {
     panic("could not create proc_count_mutex semaphore\n");
   }
@@ -216,6 +271,9 @@ proc_bootstrap(void)
  * It will have no address space and will inherit the current
  * process's (that is, the kernel menu's) current directory.
  */
+
+/** TODO: Add process to process table **/
+
 struct proc *
 proc_create_runprogram(const char *name)
 {
@@ -364,3 +422,80 @@ curproc_setas(struct addrspace *newas)
 	spinlock_release(&proc->p_lock);
 	return oldas;
 }
+
+#if OPT_A2
+
+pid_t 
+pid_create(void)
+{
+
+	lock_acquire(process_Pids_lock);
+
+	//If p_pid is returned as below PID_MIN, then we have an error in creating the pid
+	
+	//Equivalent to 1 because PID_MIN is 2;
+	int error = PID_MIN - 1;
+
+	pid_t p_pid = error;
+
+	for(pid_t idx = PID_MIN; idx < PID_MAX; idx++) {
+		if (process_Pids[idx] == NULL) {
+			p_pid = idx;
+			break;
+		}
+	}
+
+	if(p_pid == error) {
+		return error;
+	}
+
+	process_Pids[p_pid] = kmalloc(sizeof(Pid *));
+	if (process_Pids[p_pid] == NULL) {
+		return error;
+	}
+
+	//parent Pid is actually set when sys_fork is called
+	process_Pids[p_pid]->p_parentPid = 0;
+
+	process_Pids[p_pid]->p_exitStatus = 0;
+
+	process_Pids[p_pid]->p_isExited= false;
+
+	process_Pids[p_pid]->p_exit_lock = lock_create("Pid lock " + p_pid);
+	if (process_Pids[p_pid]->p_exit_lock == NULL) {
+		kfree(process_Pids[p_pid]);
+		return error;
+	}
+
+  	process_Pids[p_pid]->p_exit_cv = cv_create("Pid cv " + p_pid);
+	if (process_Pids[p_pid]->p_exit_cv == NULL) {
+		lock_destroy(process_Pids[p_pid]->p_exit_lock);
+		kfree(process_Pids[p_pid]);
+		return error;
+	}
+
+	lock_release(process_Pids_lock);
+
+	return p_pid;
+}
+
+void
+pid_destroy(pid_t pid) {
+
+	lock_acquire(process_Pids_lock);
+
+	//Only destroy the Pid when we know the parent cannot be possibly waiting on it via wait_pid
+	if(process_Pids[process_Pids[pid]->p_parentPid] == NULL) {
+		lock_destroy(process_Pids[p_pid]->p_exit_lock);
+		cv_destroy(process_Pids[p_pid]->p_exit_cv);
+		kfree(process_Pids[pid]);
+	}
+
+	lock_release(process_Pids_lock);
+}
+
+bool pid_checkexists(pid_t pid) {
+	return process_Pids[pid] != NULL;
+}
+
+#endif
