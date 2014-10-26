@@ -210,7 +210,11 @@ vm_fault(int faulttype, vaddr_t faultaddress)
 	/* Disable interrupts on this CPU while frobbing the TLB. */
 	spl = splhigh();
 
-	tlbMiss = true;
+	#if OPT_A3
+
+		tlbMiss = true;
+
+	#endif
 
 	for (i=0; i<NUM_TLB; i++) {
 		tlb_read(&ehi, &elo, i);
