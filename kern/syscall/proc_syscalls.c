@@ -8,10 +8,10 @@
 #include <proc.h>
 #include <thread.h>
 #include <addrspace.h>
-#include <copyinout.h>
 #include "opt-A2.h"
-#include <machine/trapframe.h>
 #include <synch.h>
+#include <machine/trapframe.h>
+#include <copyinout.h>
 
   /* this implementation of sys__exit does not do anything with the exit code */
   /* this needs to be fixed to get exit() and waitpid() working properly */
@@ -32,17 +32,11 @@ void sys__exit(int exitcode) {
   #if OPT_A2
 
    pid_t curpid = p->p_pid;
-   // KASSERT(curpid != 0);
 
-  lock_acquire(process_Pids[curpid]->p_exit_lock);
-
-    process_Pids[curpid]->p_exitStatus = exitcode;
-    process_Pids[curpid]->p_isExited = true;
-
-    cv_broadcast(process_Pids[curpid]->p_exit_cv, process_Pids[curpid]->p_exit_lock);
-
-  lock_release(process_Pids[curpid]->p_exit_lock);
-
+    pid_setexitstatus(curpid, exitcode);
+    pid_setisexited(curpid, true);
+    
+    struct semaphore *pid_sem = pid_getsem(curpid);
 
   #else
 
@@ -71,6 +65,13 @@ void sys__exit(int exitcode) {
 
   /* detach this thread from its process */
   /* note: curproc cannot be used after this call */
+
+  #if OPT_A2
+
+      V(pid_sem);
+
+  #endif
+
   proc_remthread(curthread);
 
   /* if this is the last user process in the system, proc_destroy()
@@ -104,7 +105,7 @@ sys_getpid(pid_t *retval)
 
   #endif
 
-  return(0);
+  return 0;
 }
 
 /* stub handler for waitpid() system call                */
@@ -176,9 +177,9 @@ EFAULT  The status argument was an invalid pointer.
 
 int
 sys_waitpid(pid_t pid,
-	    userptr_t status,
-	    int options,
-	    pid_t *retval)
+      userptr_t status,
+      int options,
+      pid_t *retval)
 {
   int exitstatus;
   int result;
@@ -196,7 +197,7 @@ sys_waitpid(pid_t pid,
   */
 
   if (options != 0) {
-    return(EINVAL);
+    return EINVAL;
   }
 
   #if OPT_A2
@@ -204,24 +205,16 @@ sys_waitpid(pid_t pid,
   if(!pid_checkexists(pid)) {
     return ESRCH;
   }
-
-  if(process_Pids[pid]->p_parentPid != curpid) {
+  
+  if(pid_getparentpid(pid) != curpid) {
     return ECHILD;
   }
 
-  
-  lock_acquire(process_Pids[pid]->p_exit_lock);
+    struct semaphore *pid_sem = pid_getsem(pid);
 
-    exitstatus = _MKWAIT_EXIT(process_Pids[pid]->p_exitStatus);
+    P(pid_sem);
 
-    if(!process_Pids[pid]->p_isExited){
-
-      cv_wait(process_Pids[pid]->p_exit_cv, process_Pids[pid]->p_exit_lock);
-
-    }
-
-  lock_release(process_Pids[pid]->p_exit_lock);
-
+    exitstatus = _MKWAIT_EXIT(pid_getexitstatus(pid));
 
   if(status == NULL) {
     return EFAULT;
@@ -236,10 +229,10 @@ sys_waitpid(pid_t pid,
  
   result = copyout((void *)&exitstatus,status,sizeof(int));
   if (result) {
-    return(result);
+    return result;
   }
   *retval = pid;
-  return(0);
+  return 0;
 }
 
 
@@ -278,41 +271,19 @@ ENOMEM  Sufficient virtual memory for the new process was not available.
 //change the register values of the trap frame to 0 because its a child
 //also activate mips_usermode in this function
 
-
-//Opted to use this function because of its code locality to sys_fork
-//rather than use enter_forked_process()
 void thread_fork_init(void * ptr, unsigned long val);
-void thread_fork_init(void * ptr, unsigned long val) {
+void thread_fork_init(void * ptr, unsigned long val){
+  //Stop the compiler from complaining
   (void)val;
 
-  //Do I need to call curproc_setas somewhere?
-
-  as_activate();
-
-  KASSERT(ptr != NULL);
-  struct trapframe newTf = *ptr; // this should be copied to our stack now.
-
-  //free the trap frame pointer we allocated in sys_fork, it's our last chance to do so
-  kfree(ptr);
- 
-  // this will set our return parameters (e.g. mips values for the tf).
-
-  //Return 0 for success (see syscall)
-  newTf.tf_v0 = 0;
-  newTf.tf_a3 = 0;
-  // Increment the PC
-  newTf.tf_epc += 4; 
-
-
-  /** * you will want to call mips usermode() (from locore/trap.c) to actually cause the switch from kernel mode to user mode.  * **/
-  //Switch from kernel mode to user mode
-  mips_usermode(&newTf);
-
-  //mips_usermode doesn't return
+  enter_forked_process((struct trapframe *) ptr);
 
 }
 
 pid_t sys_fork(struct trapframe *tf, pid_t *retval){
+
+  //Used for error checking
+  int result;
 
   struct trapframe *temporaryTrapFrame = kmalloc(sizeof(struct trapframe));
 
@@ -323,32 +294,35 @@ pid_t sys_fork(struct trapframe *tf, pid_t *retval){
   //copied to the heap, we will need to copy it to the thread's stack later
   *temporaryTrapFrame = *tf;
 
-  struct proc * child = proc_create_runprogram(curproc);
+  struct proc * child = proc_create_runprogram(curproc->p_name);
 
   if(child == NULL){
     kfree(temporaryTrapFrame);
-    splx(spl);
     return ENOMEM;
   }
 
-  int addressError = as_copy(curproc->p_addrspace, &child->p_addrspace);
+  //struct addrspace *curproc_curas = curproc_getas();
 
-    if (addressError) {
-    // destroy proc
-    proc_destroy(child);
+  result = as_copy(curproc->p_addrspace, &child->p_addrspace);
+
+  if (result) {
     kfree(temporaryTrapFrame);
-    return addressError;
+    proc_destroy(child);
+    return ENOMEM;
   }
 
-  int threadError = thread_fork(curthread->t_name, child, &thread_fork_init,
-    (void*)temporaryTrapFrame, void);
+  //Assign parent to child
 
+  pid_setparentpid(child->p_pid, curproc->p_pid);
 
-  if (threadError) {
-    // destroy proc
+  result = thread_fork(curthread->t_name, child, thread_fork_init,
+    temporaryTrapFrame, 0);
+
+  if (result) {
+    as_destroy(child->p_addrspace);
     proc_destroy(child);
     kfree(temporaryTrapFrame);
-    return threadError;
+    return result;
   }
 
   //Modify retval to return the child's pid
@@ -356,5 +330,5 @@ pid_t sys_fork(struct trapframe *tf, pid_t *retval){
 
   //If we reach here, the child process returns 0 on success
 
-  return(0);
+  return 0;
 }

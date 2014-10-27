@@ -40,31 +40,13 @@
 #include <thread.h> /* required for struct threadarray */
 #include "opt-A2.h"
 #include <synch.h>
+#include <limits.h>
 
 struct addrspace;
 struct vnode;
 #ifdef UW
 struct semaphore;
 #endif // UW
-
-#if OPT_A2
-	struct proc;
-	struct Pid;
-
-	//So we can create a new typed struct called procarray
-
-	/*
-
-	#ifndef PROCINLINE
-	#define PROCINLINE INLINE
-	#endif
-
-	DECLARRAY(proc);
-	DEFARRAY(proc, PROCINLINE);
-
-	*/
-
-#endif
 
 /*
  * Process structure.
@@ -93,29 +75,37 @@ struct proc {
 
     #if OPT_A2
 
-    const pid_t p_pid;
+    pid_t p_pid;
 
     #endif /* OPT_A2 */
 };
 
+
+#if OPT_A2
 
 //Pid of the currentproc/child will be it's position in the process array
 typedef struct {
 
 	pid_t p_parentPid;
 	
-	volatile int p_exitStatus;
-	volatile bool p_isExited;
-	//struct semaphore *pid_sem;
+	int p_exitStatus;
+	bool p_isExited;
+	
 	//synchronization primitives for exit, waitpid
-  	struct lock * p_exit_lock; 
-  	struct cv * p_exit_cv;
 
-  	//what about wait_pid?
-
-  	 //probably need a cv for wait_pid
+  	struct semaphore *p_sem;
   	
 } Pid;
+
+#endif /* OPT_A2 */
+
+/*
+
+#if OPT_A2
+	extern Pid *process_Pids[PID_MAX];
+#endif
+
+*/
 
 /* This is the process structure for the kernel and for kernel-only threads. */
 extern struct proc *kproc;
@@ -148,15 +138,26 @@ struct addrspace *curproc_setas(struct addrspace *);
 
 #if OPT_A2
 
-	//Do I need all of this?
-
 	pid_t pid_create(void);
 
 	void pid_destroy(pid_t pid);
 
 	bool pid_checkexists(pid_t pid);
 
-#endif
+    void pid_setparentpid(pid_t pid_child, pid_t pid_parent);
 
+    pid_t pid_getparentpid(pid_t pid);
+
+    void pid_setexitstatus(pid_t pid, int exitStatus);
+
+    int pid_getexitstatus(pid_t pid);
+
+    void pid_setisexited(pid_t pid, bool isExited);
+
+    bool pid_getisexited(pid_t pid);
+
+	struct semaphore *pid_getsem(pid_t pid);
+
+#endif /* OPT_A2 */
 
 #endif /* _PROC_H_ */

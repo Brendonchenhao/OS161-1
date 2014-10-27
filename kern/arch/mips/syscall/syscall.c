@@ -35,7 +35,9 @@
 #include <thread.h>
 #include <current.h>
 #include <syscall.h>
+#include <machine/trapframe.h>
 #include "opt-A2.h"
+#include <addrspace.h>
 
 
 /*
@@ -135,14 +137,10 @@ syscall(struct trapframe *tf)
 			    (pid_t *)&retval);
 	  break;
 
-	#if OPT_A2
-
 	case SYS_fork:
 	  err = sys_fork(tf, (pid_t *)&retval);
 	break;
 
-	#endif //OPT_A2
-	
 #endif // UW
 
 	    /* Add stuff here */
@@ -194,20 +192,25 @@ void
 enter_forked_process(struct trapframe *tf){
 	#if OPT_A2
 
+	KASSERT(tf != NULL);
+
 	struct trapframe newTf;
 
-	//Copy the trapframe
+	//Copy the trapframe to the stack
   	newTf = *tf;
 
   	//Free the old trapframe, since it was on the heap
+  	//which we allocated in sys_fork, it's our last chance to do so
 	kfree(tf);
 
+	// this will set our return parameters (e.g. mips values for the tf).
 	//Return 0 for success (see syscall)
 	newTf.tf_v0 = 0;
 	newTf.tf_a3 = 0;
-	// Increment the PC
+	// Increment the PC so we don't run fork again and again.
 	newTf.tf_epc += 4; 
 
+	as_activate();
 
 	/** * you will want to call mips usermode() (from locore/trap.c) to actually cause the switch from kernel mode to user mode.	* **/
 	//Switch from kernel mode to user mode
