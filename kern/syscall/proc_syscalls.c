@@ -13,6 +13,15 @@
 #include <machine/trapframe.h>
 #include <copyinout.h>
 
+//A2b
+
+#include <kern/fcntl.h>
+#include <vfs.h>
+#include <test.h>
+#include <limits.h>
+
+//A2b
+
   /* this implementation of sys__exit does not do anything with the exit code */
   /* this needs to be fixed to get exit() and waitpid() working properly */
 
@@ -332,3 +341,118 @@ pid_t sys_fork(struct trapframe *tf, pid_t *retval){
 
   return 0;
 }
+
+/*
+
+Description
+
+execv replaces the currently executing program with a newly loaded program image. This occurs within one process; the process id is unchanged.
+The pathname of the program to run is passed as program. The args argument is an array of 0-terminated strings. The array itself should be terminated by a NULL pointer.
+
+The argument strings should be copied into the new process as the new process's argv[] array. In the new process, argv[argc] must be NULL.
+
+By convention, argv[0] in new processes contains the name that was used to invoke the program. This is not necessarily the same as program, and furthermore is only a convention and should not be enforced by the kernel.
+
+The process file table and current working directory are not modified by execve.
+
+Return Values
+
+On success, execv does not return; instead, the new program begins executing. On failure, execv returns -1, and sets errno to a suitable error code for the error condition encountered.
+Errors
+
+The following error codes should be returned under the conditions given. Other error codes may be returned for other errors not mentioned here.
+   
+ENODEV  The device prefix of program did not exist.
+ENOTDIR A non-final component of program was not a directory.
+ENOENT  program did not exist.
+EISDIR  program is a directory.
+ENOEXEC program is not in a recognizable executable file format, was for the wrong platform, or contained invalid fields.
+ENOMEM  Insufficient virtual memory is available.
+E2BIG The total size of the argument strings is too large.
+EIO A hard I/O error occurred.
+EFAULT  One of the args is an invalid pointer.
+
+*/
+
+int execv(userptr_t program, userptr_t args){
+
+(void)args;
+
+
+//  char * path = kmalloc(PATH_MAX);
+
+  //copyinstr(&program, path, PATH_MAX, NULL);
+  
+  //• Count the number of arguments and copy them into the kernel
+
+  /*
+ int argNum=0;
+  while (args[argNum]!=NULL){
+    argNum++;
+  }
+
+  */
+
+  //• Copy the program path into the kernel
+
+  struct addrspace *as;
+  vaddr_t entrypoint, stackptr;
+  int result;
+  struct vnode *v;
+ 
+
+  // • Open the program file using vfs_open(prog_name, …)
+
+  result = vfs_open((char *)program, O_RDONLY, 0, &v);
+  if (result) {
+   return result;
+  }
+
+        // • Create new address space, set process to the new address space, and activate it
+        as = as_create();
+        if (as ==NULL) {
+                vfs_close(v);
+                return ENOMEM;
+        }
+
+        struct addrspace *oldAs=curproc_setas(as);
+        as_activate();
+
+        //destroy the old address space
+        as_destroy(oldAs);
+        
+        //  • Using the opened program file, load the program image using load_elf
+        result = load_elf(v, &entrypoint);
+        if (result) {
+                /* p_addrspace will go away when curproc is destroyed */
+                vfs_close(v);
+                return result;
+        }
+
+        /* Done with the file now. */
+        vfs_close(v);
+
+        // • Need to copy the arguments into the new address space. Consider copying the 
+        //arguments (both the array and the strings) onto the user stack as part of 
+        //as_define_stack.
+/* Define the user stack in the address space */
+        result = as_define_stack(as, &stackptr);
+        if (result) {
+                /* p_addrspace will go away when curproc is destroyed */
+                return result;
+        }
+       
+        //  • Delete old address space
+        //as_destroy(as);  
+ 
+        //• Call enter_new_process with address to the arguments on the stack, the stack 
+        //pointer (from as_define_stack), and the program entry point (from vfs_open)
+        /* Warp to user mode. */
+        enter_new_process(0 /*argc*/, NULL /*userspace addr of argv*/,
+                          stackptr, entrypoint);
+
+        /* enter_new_process does not return. */
+        panic("enter_new_process returned\n");
+        return EINVAL;
+  
+ }

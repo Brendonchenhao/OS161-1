@@ -68,6 +68,12 @@ int sys_waitpid(pid_t pid, userptr_t status, int options, pid_t *retval);
 
 pid_t sys_fork(struct trapframe *tf, pid_t *retval);
 
+//A2b
+
+int execv(userptr_t program, userptr_t args);
+
+//A2b 
+
 #endif // UW
 
 #endif /* _SYSCALL_H_ */
