@@ -117,6 +117,7 @@ static
 int
 copycheck(const_userptr_t userptr, size_t len, size_t *stoplen)
 {
+
 	vaddr_t bot, top;
 
 	*stoplen = len;
@@ -152,6 +153,7 @@ copycheck(const_userptr_t userptr, size_t len, size_t *stoplen)
 int
 copyin(const_userptr_t usersrc, void *dest, size_t len)
 {
+
 	int result;
 	size_t stoplen;
 
@@ -188,6 +190,7 @@ copyin(const_userptr_t usersrc, void *dest, size_t len)
 int
 copyout(const void *src, userptr_t userdest, size_t len)
 {
+
 	int result;
 	size_t stoplen;
 
@@ -235,6 +238,7 @@ int
 copystr(char *dest, const char *src, size_t maxlen, size_t stoplen,
 	size_t *gotlen)
 {
+
 	size_t i;
 
 	for (i=0; i<maxlen && i<stoplen; i++) {
@@ -265,6 +269,7 @@ copystr(char *dest, const char *src, size_t maxlen, size_t stoplen,
 int
 copyinstr(const_userptr_t usersrc, char *dest, size_t len, size_t *actual)
 {
+
 	int result;
 	size_t stoplen;
 
@@ -298,6 +303,7 @@ copyinstr(const_userptr_t usersrc, char *dest, size_t len, size_t *actual)
 int
 copyoutstr(const char *src, userptr_t userdest, size_t len, size_t *actual)
 {
+
 	int result;
 	size_t stoplen;
 

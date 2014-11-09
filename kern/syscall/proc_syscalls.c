@@ -376,83 +376,199 @@ EFAULT  One of the args is an invalid pointer.
 
 int execv(userptr_t program, userptr_t args){
 
-(void)args;
+  /* Error checking */
+
+  if(program == NULL){
+    return ENOENT;
+  }
+
+  if(args == NULL){
+    return EFAULT;
+  }
+
+  if(strlen((char *)program) > PATH_MAX){
+    return E2BIG;
+  }
 
 
-//  char * path = kmalloc(PATH_MAX);
-
-  //copyinstr(&program, path, PATH_MAX, NULL);
-  
-  //• Count the number of arguments and copy them into the kernel
-
+  //TODO:
   /*
- int argNum=0;
-  while (args[argNum]!=NULL){
-    argNum++;
+
+  char *endOfDirectory = strrchr((char *)program, '/') + 1;
+  size_t programNameLength = (char *)strlen((char *)program) - endOfDirectory;
+
+  if (programNameLength > NAME_MAX){
+   return E2BIG;
   }
 
   */
 
-  //• Copy the program path into the kernel
+  //TODO: ENODEV, ENOTDIR, EISDIR, ENOEXEC, EIO
 
-  struct addrspace *as;
-  vaddr_t entrypoint, stackptr;
-  int result;
-  struct vnode *v;
- 
+  /* Error checking */
 
-  // • Open the program file using vfs_open(prog_name, …)
+  //• Count the number of arguments
 
-  result = vfs_open((char *)program, O_RDONLY, 0, &v);
-  if (result) {
-   return result;
+  bool argumentsExist = (args != NULL);
+
+  size_t argc = 0;
+
+ if(argumentsExist){
+    while(true){
+      char *argtemp = NULL;
+      copyin(args + argc * sizeof(char*), &argtemp, sizeof(char*));
+      
+      if(argtemp != NULL){
+        argc++;
+      }
+      else{
+        break;
+      }
+    }
   }
 
-        // • Create new address space, set process to the new address space, and activate it
-        as = as_create();
-        if (as ==NULL) {
-                vfs_close(v);
-                return ENOMEM;
-        }
+  //• Copy arguments into the kernel
 
-        struct addrspace *oldAs=curproc_setas(as);
-        as_activate();
+  //• Copy the program path into the kernel
 
-        //destroy the old address space
-        as_destroy(oldAs);
-        
-        //  • Using the opened program file, load the program image using load_elf
-        result = load_elf(v, &entrypoint);
-        if (result) {
-                /* p_addrspace will go away when curproc is destroyed */
-                vfs_close(v);
-                return result;
-        }
+  /* Note that the program path is also stored in args[0] so this is copied when 
+  all the arguments are copied in
+  */
 
-        /* Done with the file now. */
-        vfs_close(v);
+  char **kernelArgs = kmalloc(sizeof(char *) * (argc+1));
+  if(kernelArgs == NULL){
+    return ENOMEM;
+  }
 
-        // • Need to copy the arguments into the new address space. Consider copying the 
-        //arguments (both the array and the strings) onto the user stack as part of 
-        //as_define_stack.
-/* Define the user stack in the address space */
-        result = as_define_stack(as, &stackptr);
-        if (result) {
-                /* p_addrspace will go away when curproc is destroyed */
-                return result;
-        }
-       
-        //  • Delete old address space
-        //as_destroy(as);  
- 
-        //• Call enter_new_process with address to the arguments on the stack, the stack 
-        //pointer (from as_define_stack), and the program entry point (from vfs_open)
-        /* Warp to user mode. */
-        enter_new_process(0 /*argc*/, NULL /*userspace addr of argv*/,
-                          stackptr, entrypoint);
-
-        /* enter_new_process does not return. */
-        panic("enter_new_process returned\n");
-        return EINVAL;
+  int result;
   
+  for(size_t i = 0; i < argc; i++){
+    kernelArgs[i] = kmalloc(ARG_MAX);
+    char *argtemp;
+    argtemp = kernelArgs[i];
+    size_t actualArgLength;
+
+    result = copyinstr((const_userptr_t)argtemp, kernelArgs[i], ARG_MAX, &actualArgLength);
+
+    if(result) {
+      return result;
+    }
+  }
+
+ /* Need to NULL terminate */
+  kernelArgs[argc] = NULL;
+
+  /* Since vfs_open may modify its first argument,
+  it is generally a good idea to make a copy of that argument and then pass the copy to vfs_open.
+  */
+  char *fname_temp;
+  fname_temp = kstrdup((char *) program);
+  if(fname_temp == NULL) {
+    return ENOMEM;
+  }
+
+  // • Open the program file using vfs_open(prog_name, …)
+  struct vnode *v;
+  result = vfs_open(fname_temp, O_RDONLY, 0, &v);
+  if (result) {
+  return result;
+  }
+
+  kfree(fname_temp);
+
+  // • Create new address space, set process to the new address space, and activate it
+  struct addrspace *as;
+  as = as_create();
+  if (as ==NULL) {
+          vfs_close(v);
+          return ENOMEM;
+  }
+
+  struct addrspace *oldAs=curproc_setas(as);
+  as_activate();
+
+  /* Destroy the old address space */
+  as_destroy(oldAs);
+
+  //  • Using the opened program file, load the program image using load_elf
+  vaddr_t entrypoint;
+  result = load_elf(v, &entrypoint);
+  if (result) {
+          /* p_addrspace will go away when curproc is destroyed */
+          vfs_close(v);
+          return result;
+  }
+
+  /* Done with the file now. */
+  vfs_close(v);
+
+  /* Define the user stack in the address space */
+  vaddr_t stackptr;
+  result = as_define_stack(as, &stackptr);
+  if (result) {
+          /* p_addrspace will go away when curproc is destroyed */
+          return result;
+  }
+
+  // • Need to copy the arguments into the new address space. Consider copying the 
+  //arguments (both the array and the strings) onto the user stack as part of 
+  //as_define_stack.
+
+  vaddr_t argsStackAddress[argc];
+  
+  /* Need to NULL terminate */
+
+  argsStackAddress[argc] = 0;
+
+  /* Copy argument strings first, do not copy NULL one */
+  for(int i = (int)argc-1; i >= 0; i--){
+
+    size_t actualArgLength=strlen(kernelArgs[i])+1;
+    /* When storing items on the stack, pad each item such that 
+    they are 8-byte aligned
+    */
+    stackptr -= ROUNDUP(actualArgLength,8);
+    copyoutstr(kernelArgs[i], (userptr_t)stackptr, ARG_MAX, &actualArgLength);
+    
+    if(result) {
+      return result;
+    }
+    argsStackAddress[i] = stackptr;
+  }
+
+  /* Copy argument pointers */
+    for (int i = (int)argc; i >= 0; i--){
+    stackptr -= sizeof(vaddr_t);
+    result = copyout(&argsStackAddress[i], (userptr_t)stackptr, sizeof(vaddr_t));
+    if(result) {
+      return result;
+    }
+  }
+
+  vaddr_t userspaceAddr = 0;
+
+  if(argumentsExist){
+    userspaceAddr = stackptr;
+  }
+
+  /* Free the heap allocs */
+
+  for(size_t i = 0; i < argc; i++){
+    kfree(kernelArgs[i]);
+    kernelArgs[i] = NULL;
+  }
+
+  kfree(kernelArgs);
+  kernelArgs = NULL;
+
+  //• Call enter_new_process with address to the arguments on the stack, the stack 
+  //pointer (from as_define_stack), and the program entry point (from vfs_open)
+  /* Warp to user mode. */
+  enter_new_process(argc /*argc*/, (userptr_t)userspaceAddr /*userspace addr of argv*/,
+                    stackptr, entrypoint);
+
+  /* enter_new_process does not return. */
+  panic("enter_new_process returned\n");
+  return EINVAL;
+    
  }

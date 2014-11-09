@@ -45,6 +45,13 @@
 #include <syscall.h>
 #include <test.h>
 
+ /* A2b */
+
+ #include <limits.h>
+ #include <copyinout.h>
+
+ /* A2b */ 
+
 /*
  * Load program "progname" and start running it in usermode.
  * Does not return except on error.
@@ -52,12 +59,35 @@
  * Calls vfs_open on progname and thus may destroy it.
  */
 int
-runprogram(char *progname)
+runprogram(char *progname, int argc, char **args)
 {
 	struct addrspace *as;
 	struct vnode *v;
 	vaddr_t entrypoint, stackptr;
-	int result;
+
+  	int result;
+
+  	/* A2b */
+
+	if(progname == NULL){
+		return ENOENT;
+	}
+
+	if(strlen(progname) > PATH_MAX){
+    	return E2BIG;
+  	}
+
+	if(args == NULL){
+		return EFAULT;
+	}
+
+	size_t actualArgLengths[argc];
+
+	for (int i = argc-1; i >= 0; i--){
+		actualArgLengths[i] = strlen(args[i]) + 1;
+	}
+
+	/* A2b */
 
 	/* Open the file. */
 	result = vfs_open(progname, O_RDONLY, 0, &v);
@@ -97,9 +127,55 @@ runprogram(char *progname)
 		return result;
 	}
 
+
+	/* A2b */
+
+  bool argumentsExist = (argc != 0);
+
+   // • Need to copy the arguments into the new address space. Consider copying the 
+  //arguments (both the array and the strings) onto the user stack as part of 
+  //as_define_stack.
+
+  vaddr_t argsStackAddress[argc];
+  
+  /* Need to NULL terminate */
+
+  argsStackAddress[argc] = 0;
+
+  /* Copy argument strings first, do not copy NULL one */
+  for(int i = argc-1; i >= 0; i--){
+  	/* When storing items on the stack, pad each item such that 
+	they are 8-byte aligned
+	*/
+    stackptr -= ROUNDUP(actualArgLengths[i], 8);
+    result = copyoutstr(args[i], (userptr_t) stackptr, ARG_MAX, &actualArgLengths[i]);
+    if(result) {
+      return result;
+    }
+    argsStackAddress[i] = stackptr;
+  }
+
+  /* Copy argument pointers */
+    for (int i = argc; i >= 0; i--){
+    stackptr -= sizeof(vaddr_t);
+    result = copyout(&argsStackAddress[i], (userptr_t)stackptr, sizeof(vaddr_t));
+    if(result) {
+      return result;
+    }
+  }
+
+  vaddr_t userspaceAddr = 0;
+
+  if(argumentsExist){
+    userspaceAddr = stackptr;
+
+  }
+
 	/* Warp to user mode. */
-	enter_new_process(0 /*argc*/, NULL /*userspace addr of argv*/,
+	enter_new_process(argc /*argc*/, (userptr_t)userspaceAddr /*userspace addr of argv*/,
 			  stackptr, entrypoint);
+
+	/* A2b */
 	
 	/* enter_new_process does not return. */
 	panic("enter_new_process returned\n");
