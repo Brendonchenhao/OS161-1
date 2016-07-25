@@ -1,1 +1,3 @@
-OS 161 Assignments for cs350 at uWaterloo
+# Operating System 161
+
+OS 161 Assignments for school project @ uWaterloo
